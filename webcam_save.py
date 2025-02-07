@@ -11,7 +11,7 @@ model_path = r"./best_model.pt"  # Update with your actual model path
 model = YOLO(model_path)
 
 # API Endpoint (Replace with your actual MongoDB backend URL)
-url = "http://localhost:3000/api/hazard"
+url = "http://localhost:3000/api/hazards"
 
 # Create a folder to save pothole images
 save_folder = "detected_potholes"
@@ -26,6 +26,8 @@ if not cap.isOpened():
     exit()
 
 print("✅ Camera opened successfully!")
+
+captured_images = 0  # Counter to track the number of images captured
 
 while cap.isOpened():
     ret, frame = cap.read()
@@ -48,20 +50,19 @@ while cap.isOpened():
             conf = box.conf[0]  # Confidence score
             cls = int(box.cls[0])  # Class index
 
-            if conf > 0.5:  # Only show high-confidence detections
+            if conf > 0.6:  # Only show high-confidence detections
                 label = f"Pothole ({conf:.2f})"
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)  # Red bounding box
                 cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-                
                 pothole_detected = True  # Set flag to True
 
-    # If a pothole is detected, save the image and send data to API
-    if pothole_detected:
+    # If a pothole is detected and we haven't captured 2 images yet
+    if pothole_detected and captured_images < 2:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # Generate a unique timestamp
         image_path = os.path.join(save_folder, f"pothole_{timestamp}.jpg")  
         cv2.imwrite(image_path, frame)  # Save the image
-
-        print(f"✅ Saved pothole image: {image_path}")
+        captured_images += 1  # Increment counter
+        print(f"✅ Saved pothole image ({captured_images}/2): {image_path}")
 
         # Convert image to Base64
         with open(image_path, "rb") as image_file:
@@ -85,11 +86,16 @@ while cap.isOpened():
             print(f"📡 Server Response: {response.text}")
         except requests.exceptions.RequestException as e:
             print(f"❌ ERROR: Failed to send data to backend: {e}")
-
+    
     # Show the webcam feed with detections
     cv2.imshow("Pothole Detection", frame)
 
-    # Press 'q' to exit the webcam feed
+    # Break the loop after capturing 2 images
+    if captured_images >= 2:
+        print("✅ Captured 2 images. Exiting...")
+        break
+
+    # Press 'q' to exit manually
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
