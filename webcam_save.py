@@ -1,26 +1,28 @@
 import cv2
 import os
 import base64
-import requests
 import json
+import pymongo  # MongoDB client
 from ultralytics import YOLO
 from datetime import datetime
+from pymongo import MongoClient
 
-# Use a smaller model for better performance
-model_path = "/home/pi/ML_models/yolov8n.pt"
+# MongoDB Atlas Connection
+MONGO_URI = "mongodb+srv://jv8110909191:ASas12.,@cluster0.qsdf4.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+DB_NAME = "test"
+COLLECTION_NAME = "hazards"
+
+# Connect to MongoDB Atlas
+client = MongoClient(MONGO_URI)
+db = client[DB_NAME]
+collection = db[COLLECTION_NAME]
+
+# Load the trained model
+model_path = r"./best_model.pt"  # Update with your actual model path
 model = YOLO(model_path)
 
-# API Endpoint (Replace with your actual database API)
-url = "http://localhost:3000/api/hazards"
-
-# Create a folder to save pothole images
-save_folder = "detected_potholes"
-os.makedirs(save_folder, exist_ok=True)
-
-# Set up OpenCV
+# Open the webcam
 cap = cv2.VideoCapture(0)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)  
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)  
 
 # ✅ Check if camera is detected
 if not cap.isOpened():
@@ -29,68 +31,63 @@ if not cap.isOpened():
 
 print("✅ Camera opened successfully!")
 
-frame_skip = 2  # Process every 2nd frame
-frame_count = 0
 captured_images = 0  # Counter to track the number of images captured
 
 while cap.isOpened():
     ret, frame = cap.read()
     if not ret:
-        print("❌ ERROR: Frame capture failed.")
-        break
+        print("❌ ERROR: Frame capture failed. Restarting camera...")
+        cap.release()
+        cap = cv2.VideoCapture(0)
+        continue
 
-    frame_count += 1
-    if frame_count % frame_skip != 0:
-        continue  # Skip frames to improve speed
-
-    results = model(frame)  # Run detection
+    # Perform object detection
+    results = model(frame)
 
     # Flag to check if pothole is detected
     pothole_detected = False  
 
+    # Draw bounding boxes on the frame
     for r in results:
         for box in r.boxes:
             x1, y1, x2, y2 = map(int, box.xyxy[0])  # Get bounding box coordinates
             conf = box.conf[0]  # Confidence score
             cls = int(box.cls[0])  # Class index
 
-            if conf > 0.6:  # Only store high-confidence detections
+            if conf > 0.5:  # Only show high-confidence detections
                 label = f"Pothole ({conf:.2f})"
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)  # Red bounding box
                 cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-                pothole_detected = True
+                pothole_detected = True  # Set flag to True
 
     # If a pothole is detected and we haven't captured 2 images yet
     if pothole_detected and captured_images < 2:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # Generate a unique timestamp
-        image_path = os.path.join(save_folder, f"pothole_{timestamp}.jpg")  
-        cv2.imwrite(image_path, frame)  # Save the image
-        captured_images += 1  # Increment counter
-        print(f"✅ Saved pothole image ({captured_images}/2): {image_path}")
+        timestamp = datetime.utcnow()  # Store timestamp in UTC
+        image_filename = f"pothole_{timestamp.strftime('%Y%m%d_%H%M%S')}.jpg"
 
         # Convert image to Base64
-        with open(image_path, "rb") as image_file:
-            base64_image = base64.b64encode(image_file.read()).decode('utf-8')
+        _, buffer = cv2.imencode(".jpg", frame)
+        base64_image = base64.b64encode(buffer).decode('utf-8')
 
-        # Prepare API payload
-        payload = json.dumps({
-            "latitude": 34.052235,  # Replace with actual GPS data if available
-            "longitude": -118.243683,
+        # Prepare MongoDB document
+        pothole_data = {
+            "latitude": 0,  # Default to 0
+            "longitude": 0,  # Default to 0
             "cameraId": "CAM002",
-            "impact": "Medium",
-            "image": f"data:image/jpeg;base64,{base64_image}"
-        })
+            "image": f"data:image/jpeg;base64,{base64_image}",
+            "status": "not-responded",  # Default status
+            "time": timestamp  # MongoDB Date format
+        }
 
-        # API headers
-        headers = {'Content-Type': 'application/json'}
-
-        # Send request to API
+        # Insert into MongoDB Atlas
         try:
-            response = requests.post(url, headers=headers, data=payload)
-            print(f"📡 Server Response: {response.text}")
-        except requests.exceptions.RequestException as e:
-            print(f"❌ ERROR: Failed to send data to backend: {e}")
-    
+            collection.insert_one(pothole_data)
+            print(f"✅ Pothole data saved in MongoDB Atlas: {pothole_data}")
+        except Exception as e:
+            print(f"❌ ERROR: Failed to insert into MongoDB: {e}")
+
+        captured_images += 1  # Increment counter
+
     # Show the webcam feed with detections
     cv2.imshow("Pothole Detection", frame)
 
@@ -100,7 +97,7 @@ while cap.isOpened():
         break
 
     # Press 'q' to exit manually
-    if cv2.waitKey(10) & 0xFF == ord('q'):
+    if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
 cap.release()
