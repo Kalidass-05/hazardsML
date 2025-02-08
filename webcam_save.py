@@ -71,8 +71,8 @@ while cap.isOpened():
 
         # Prepare MongoDB document
         pothole_data = {
-            "latitude": 0,  # Default to 0
-            "longitude": 0,  # Default to 0
+            "latitude": 10.9390,  # Default to 0
+            "longitude": 76.9522,  # Default to 0
             "cameraId": "CAM002",
             "image": f"data:image/jpeg;base64,{base64_image}",
             "status": "not-responded",  # Default status
