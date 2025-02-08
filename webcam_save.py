@@ -6,19 +6,21 @@ import json
 from ultralytics import YOLO
 from datetime import datetime
 
-# Load the trained model
-model_path = r"./best_model.pt"  # Update with your actual model path
+# Use a smaller model for better performance
+model_path = "/home/pi/ML_models/yolov8n.pt"
 model = YOLO(model_path)
 
-# API Endpoint (Replace with your actual MongoDB backend URL)
+# API Endpoint (Replace with your actual database API)
 url = "http://localhost:3000/api/hazards"
 
 # Create a folder to save pothole images
 save_folder = "detected_potholes"
 os.makedirs(save_folder, exist_ok=True)
 
-# Open the webcam
+# Set up OpenCV
 cap = cv2.VideoCapture(0)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)  
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)  
 
 # ✅ Check if camera is detected
 if not cap.isOpened():
@@ -27,34 +29,36 @@ if not cap.isOpened():
 
 print("✅ Camera opened successfully!")
 
+frame_skip = 2  # Process every 2nd frame
+frame_count = 0
 captured_images = 0  # Counter to track the number of images captured
 
 while cap.isOpened():
     ret, frame = cap.read()
     if not ret:
-        print("❌ ERROR: Frame capture failed. Restarting camera...")
-        cap.release()
-        cap = cv2.VideoCapture(0)
-        continue
+        print("❌ ERROR: Frame capture failed.")
+        break
 
-    # Perform object detection
-    results = model(frame)
+    frame_count += 1
+    if frame_count % frame_skip != 0:
+        continue  # Skip frames to improve speed
+
+    results = model(frame)  # Run detection
 
     # Flag to check if pothole is detected
     pothole_detected = False  
 
-    # Draw bounding boxes on the frame
     for r in results:
         for box in r.boxes:
             x1, y1, x2, y2 = map(int, box.xyxy[0])  # Get bounding box coordinates
             conf = box.conf[0]  # Confidence score
             cls = int(box.cls[0])  # Class index
 
-            if conf > 0.6:  # Only show high-confidence detections
+            if conf > 0.6:  # Only store high-confidence detections
                 label = f"Pothole ({conf:.2f})"
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)  # Red bounding box
                 cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-                pothole_detected = True  # Set flag to True
+                pothole_detected = True
 
     # If a pothole is detected and we haven't captured 2 images yet
     if pothole_detected and captured_images < 2:
@@ -96,7 +100,7 @@ while cap.isOpened():
         break
 
     # Press 'q' to exit manually
-    if cv2.waitKey(1) & 0xFF == ord('q'):
+    if cv2.waitKey(10) & 0xFF == ord('q'):
         break
 
 cap.release()
